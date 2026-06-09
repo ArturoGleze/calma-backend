@@ -1,7 +1,7 @@
 {
   "name": "calma-backend",
   "version": "1.0.0",
-  "description": "Backend del formulario de beta de Calma (Express + Nodemailer)",
+  "description": "Backend del formulario de beta de Calma (Express + API de Brevo)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,7 +10,6 @@
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "nodemailer": "^8.0.10"
+    "express": "^4.19.2"
   }
 }

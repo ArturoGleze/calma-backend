@@ -3,33 +3,32 @@
 //  Recibe el registro de la landing y envía dos correos:
 //    1) Aviso para TI (equipo de Calma) con los datos del interesado
 //    2) Confirmación branded para el visitante
-//  Stack: Node.js + Express + Nodemailer (Gmail)  ·  Deploy: Render
+//  Envío vía API HTTP de Brevo (HTTPS) — funciona en Render free,
+//  que bloquea SMTP. Deploy: Render.
 // ════════════════════════════════════════════════════════════════
 require('dotenv').config();
 const express = require('express');
-const nodemailer = require('nodemailer');
 const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Banner del correo (opcional): sube tu imagen de Figma a tu sitio de Netlify
-// y pega su URL como variable de entorno EMAIL_HEADER_URL en Render.
-// Si no está, el correo usa un encabezado de texto con la marca.
+// ── Configuración de correo (Brevo) ──────────────────────────────
+// BREVO_API_KEY: llave de API (empieza con "xkeysib-").
+// SENDER_EMAIL : correo verificado como remitente en Brevo.
+// OWNER_EMAIL  : a dónde te llegan los avisos (por defecto, el remitente).
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+const SENDER_EMAIL = process.env.SENDER_EMAIL || '';
+const OWNER_EMAIL = process.env.OWNER_EMAIL || SENDER_EMAIL;
+
+// Banner del correo (opcional): sube tu imagen a tu sitio de Netlify y
+// pega su URL como variable de entorno EMAIL_HEADER_URL en Render. Si no
+// está, el correo usa un encabezado de texto con la marca.
 const EMAIL_HEADER_URL = process.env.EMAIL_HEADER_URL || '';
 
 // ── Middlewares ──────────────────────────────────────────────────
 app.use(cors());          // Permite peticiones desde tu dominio de Netlify
 app.use(express.json());  // Lee el body en formato JSON
-
-// ── Transportador de correo (Gmail + contraseña de aplicación) ───
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,      // tu-correo@gmail.com
-    pass: process.env.GMAIL_APP_PASS,  // contraseña de app de 16 caracteres
-  },
-});
 
 // Escapa el texto del formulario para que no rompa el HTML del correo
 function esc(str = '') {
@@ -46,6 +45,30 @@ function emailValido(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+// Envía un correo por la API HTTP de Brevo (no usa SMTP).
+async function enviarCorreo({ to, subject, html, replyTo }) {
+  const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': BREVO_API_KEY,
+      'Content-Type': 'application/json',
+      'accept': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: 'Calma', email: SENDER_EMAIL },
+      to: [{ email: to }],
+      ...(replyTo ? { replyTo: { email: replyTo } } : {}),
+      subject,
+      htmlContent: html,
+    }),
+    signal: AbortSignal.timeout(15000), // no colgarse si Brevo no responde
+  });
+  if (!resp.ok) {
+    const detalle = await resp.text().catch(() => '');
+    throw new Error(`Brevo respondió ${resp.status}: ${detalle}`);
+  }
+}
+
 // ── Plantillas de correo (estética salvia de Calma) ──────────────
 // Paleta en HEX (los correos no soportan oklch de forma confiable).
 const COLOR = {
@@ -53,8 +76,8 @@ const COLOR = {
   soft: '#eef3ee', text: '#2b332c', muted: '#8a948b', body: '#4a544b',
 };
 
-// Encabezado: usa tu banner de Figma si EMAIL_HEADER_URL está puesto;
-// si no, un wordmark de texto con el mismo look de la landing.
+// Encabezado: usa tu banner si EMAIL_HEADER_URL está puesto; si no, un
+// wordmark de texto con el mismo look de la landing.
 function encabezado() {
   if (EMAIL_HEADER_URL) {
     return `<tr><td style="padding:0;">
@@ -128,9 +151,8 @@ app.post('/contacto', async (req, res) => {
 
   try {
     // 1) Correo que recibes TÚ (el equipo de Calma)
-    await transporter.sendMail({
-      from: process.env.GMAIL_USER,
-      to: process.env.GMAIL_USER,
+    await enviarCorreo({
+      to: OWNER_EMAIL,
       replyTo: email, // así puedes responderle directo al interesado
       subject: `🌱 Nueva solicitud al beta de Calma: ${email}`,
       html: emailNotificacion({
@@ -141,8 +163,7 @@ app.post('/contacto', async (req, res) => {
     });
 
     // 2) Correo de confirmación branded al visitante
-    await transporter.sendMail({
-      from: `Calma <${process.env.GMAIL_USER}>`,
+    await enviarCorreo({
       to: email,
       subject: 'Recibimos tu solicitud — Calma 🌱',
       html: emailConfirmacion(),
@@ -166,7 +187,6 @@ app.use((err, req, res, next) => {
 });
 
 // Arranca el servidor solo si se ejecuta directo (node server.js).
-// Si se importa (para previsualizar correos) NO arranca.
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Servidor de Calma corriendo en puerto ${PORT}`);
